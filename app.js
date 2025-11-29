@@ -1,183 +1,161 @@
-// Shared app logic used by both pages.
-// Key: books are saved in localStorage under "mini_books_v1"
-
-const DEFAULT_IMAGE = "https://m.media-amazon.com/images/I/71ZB18P3inL._SY522_.jpg";
-const STORAGE_KEY = "mini_books_v1";
-
-/* Utility: read/write storage */
-function readBooks() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch(e){
-    console.error(e);
-    return [];
-  }
+/* Fleet Management App
+  - data persisted in localStorage under key 'fleets_v1'
+  - supports add, delete (confirm), update driver (prompt), toggle availability, combined filters, clear filters, clear all data
+*/
+// config
+const STORAGE_KEY = 'fleets_v1';
+const DEFAULT_IMG = 'https://images.unsplash.com/photo-1542362567-b07e54358753?q=80&w=800&auto=format&fit=crop&ixlib=rb-4.0.3&s=3c3d4085d9b3d7e5d1f8e02d8f5b3f2e';
+// util storage
+function readFleets(){ try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); } catch(e){return [];} }
+function writeFleets(arr){ localStorage.setItem(STORAGE_KEY, JSON.stringify(arr)); }
+// id
+function uid(){ return 'f_' + Math.random().toString(36).slice(2,9); }
+// safe text
+function esc(s=''){ return String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
+// create card element
+function createCard(fleet){
+ const el = document.createElement('div');
+ el.className = 'card';
+el.dataset.id = fleet.id;
+ const availLabel = fleet.isAvailable ? 'Available' : 'Unavailable';
+ el.innerHTML = `
+<div class="thumb" style="background-image:url('${esc(fleet.image || DEFAULT_IMG)}')"></div>
+<h3>${esc(fleet.regNo)}</h3>
+<div class="meta">${esc(fleet.category)} • <strong>${esc(availLabel)}</strong></div>
+<p style="margin-bottom:8px;"><em>Driver:</em> ${esc(fleet.driver)}</p>
+<div class="card-actions">
+<button class="muted" data-action="update">Update Driver</button>
+<button class="muted" data-action="toggle">${fleet.isAvailable ? 'Set Unavailable' : 'Set Available'}</button>
+<button class="danger" data-action="delete">Delete</button>
+</div>
+ `;
+ return el;
 }
-function writeBooks(arr){
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(arr));
+// render grid with filters
+function render({category='All', availability='All'} = {}){
+ const grid = document.getElementById('fleetGrid');
+ if(!grid) return; // not on page
+ let fleets = readFleets();
+ if(category && category !== 'All'){
+   fleets = fleets.filter(f => f.category === category);
+ }
+ if(availability && availability !== 'All'){
+   const want = availability === 'Available';
+   fleets = fleets.filter(f => f.isAvailable === want);
+ }
+ grid.innerHTML = '';
+ if(fleets.length === 0){
+   grid.innerHTML = '<p class="small-note">No fleets to show.</p>';
+ } else {
+   fleets.forEach(f => grid.appendChild(createCard(f)));
+ }
+ // update total count
+ const total = readFleets().length;
+ const totalEl = document.getElementById('totalCount');
+ if(totalEl) totalEl.textContent = total;
 }
-
-/* Create id for each book */
-function createId() {
-  return "b_" + Math.random().toString(36).slice(2,9);
+// delegated click handler for card actions
+function attachCardHandler(){
+ const grid = document.getElementById('fleetGrid');
+ if(!grid) return;
+ grid.addEventListener('click', (e) => {
+   const btn = e.target.closest('button[data-action]');
+   if(!btn) return;
+   const action = btn.dataset.action;
+   const card = btn.closest('.card');
+   const id = card?.dataset.id;
+   if(!id) return;
+   let fleets = readFleets();
+   const idx = fleets.findIndex(f => f.id === id);
+   if(idx === -1) return;
+   if(action === 'delete'){
+     if(!confirm('Delete this vehicle?')) return;
+     fleets.splice(idx,1);
+     writeFleets(fleets);
+     render(getFiltersFromUI());
+   } else if(action === 'update'){
+     const current = fleets[idx].driver || '';
+     const name = prompt('Enter new driver name:', current);
+     // if cancel => null, if empty or whitespace -> do not update
+     if(name === null) return;
+     const cleaned = name.trim();
+     if(cleaned.length === 0){ alert('Driver name cannot be empty.'); return; }
+     fleets[idx].driver = cleaned;
+     writeFleets(fleets);
+     render(getFiltersFromUI());
+   } else if(action === 'toggle'){
+     fleets[idx].isAvailable = !fleets[idx].isAvailable;
+     writeFleets(fleets);
+     render(getFiltersFromUI());
+   }
+ });
 }
-
-/* Book card markup */
-function createCard(book) {
-  const div = document.createElement("div");
-  div.className = "card";
-  div.dataset.id = book.id;
-  div.innerHTML = `
-    <img src="${escapeHtml(book.imageUrl || DEFAULT_IMAGE)}" alt="${escapeHtml(book.title)}" />
-    <h3>${escapeHtml(book.title)}</h3>
-    <div class="meta">By ${escapeHtml(book.author)} • ${escapeHtml(book.category)}</div>
-    <div class="card-actions">
-      <button class="danger" data-action="delete">Delete</button>
-    </div>
-  `;
-  return div;
+// form submit: add fleet
+function attachFormHandler(){
+ const form = document.getElementById('fleetForm');
+ if(!form) return;
+ form.addEventListener('submit', (e) => {
+   e.preventDefault();
+   const regNo = document.getElementById('regNo').value.trim();
+   const category = document.getElementById('category').value;
+   const driver = document.getElementById('driver').value.trim();
+   const isAvailable = document.getElementById('isAvailable').checked;
+   if(!regNo || !category || !driver){
+     alert('Please fill Reg No, Category and Driver.');
+     return;
+   }
+   const fleets = readFleets();
+   fleets.push({
+     id: uid(),
+     regNo,
+     category,
+     driver,
+     isAvailable,
+     image: DEFAULT_IMG
+   });
+   writeFleets(fleets);
+   form.reset();
+   render(getFiltersFromUI());
+ });
+ // clear all fleets button
+ const clearBtn = document.getElementById('clearAll');
+ if(clearBtn){
+   clearBtn.addEventListener('click', () => {
+     if(!confirm('Clear all fleets from storage?')) return;
+     localStorage.removeItem(STORAGE_KEY);
+     render(getFiltersFromUI());
+   });
+ }
 }
-
-/* Prevent basic html injection in text values (simple) */
-function escapeHtml(str = "") {
-  return String(str)
-    .replaceAll("&","&amp;")
-    .replaceAll("<","&lt;")
-    .replaceAll(">","&gt;")
-    .replaceAll('"',"&quot;");
+// filter controls
+function setupFilters(){
+ const cat = document.getElementById('navCategoryFilter');
+ const avail = document.getElementById('navAvailabilityFilter');
+ const clear = document.getElementById('clearFilters');
+ function onChange(){
+   render({category: cat.value, availability: avail.value});
+ }
+ if(cat) cat.addEventListener('change', onChange);
+ if(avail) avail.addEventListener('change', onChange);
+ if(clear) clear.addEventListener('click', () => {
+   cat.value = 'All';
+   avail.value = 'All';
+   render({category:'All', availability:'All'});
+ });
 }
-
-/* Render grid in given container with options */
-function renderGrid(containerSelector, options = {}) {
-  const container = document.querySelector(containerSelector);
-  if (!container) return;
-  let books = readBooks();
-
-  // Filter
-  if (options.filter && options.filter !== "All") {
-    books = books.filter(b => b.category === options.filter);
-  }
-
-  // Sort
-  if (options.sort === "asc") {
-    books.sort((a,b) => a.title.localeCompare(b.title));
-  } else if (options.sort === "desc") {
-    books.sort((a,b) => b.title.localeCompare(a.title));
-  }
-
-  container.innerHTML = "";
-  if (books.length === 0) {
-    const note = document.createElement("div");
-    note.className = "small-note";
-    note.textContent = "No books found. Add some from the Admin page.";
-    container.appendChild(note);
-    return;
-  }
-
-  books.forEach(book => {
-    const card = createCard(book);
-    container.appendChild(card);
-  });
+// helper to read filters state
+function getFiltersFromUI(){
+ const cat = document.getElementById('navCategoryFilter');
+ const avail = document.getElementById('navAvailabilityFilter');
+ return { category: cat ? cat.value : 'All', availability: avail ? avail.value : 'All' };
 }
-
-/* Setup delete handler delegated to container */
-function attachDeleteHandler(containerSelector) {
-  const container = document.querySelector(containerSelector);
-  if(!container) return;
-  container.addEventListener("click", (e) => {
-    const btn = e.target.closest("button[data-action='delete']");
-    if (!btn) return;
-    const card = btn.closest(".card");
-    if (!card) return;
-    const id = card.dataset.id;
-    if (!id) return;
-    if (!confirm("Delete this book?")) return;
-    let books = readBooks();
-    books = books.filter(b => b.id !== id);
-    writeBooks(books);
-    card.remove();
-  });
-}
-
-/* Admin page: handle form submit and clear */
-function initAdminPage() {
-  const form = document.getElementById("addBookForm");
-  const adminGrid = document.getElementById("adminGrid");
-  const clearBtn = document.getElementById("clearStorage");
-
-  // initial render
-  renderGrid("#adminGrid");
-
-  attachDeleteHandler("#adminGrid");
-
-  form.addEventListener("submit", (ev) => {
-    ev.preventDefault();
-    const title = form.title.value.trim();
-    const author = form.author.value.trim();
-    const category = form.category.value;
-    const imageUrl = form.imageUrl.value.trim() || DEFAULT_IMAGE;
-
-    if (!title || !author || !category) {
-      alert("Please fill Title, Author and Category.");
-      return;
-    }
-
-    const books = readBooks();
-    const newBook = {
-      id: createId(),
-      title,
-      author,
-      category,
-      imageUrl
-    };
-    books.push(newBook);
-    writeBooks(books);
-
-    // reset form
-    form.reset();
-
-    // re-render
-    renderGrid("#adminGrid");
-    alert("Book added!");
-  });
-
-  if (clearBtn) {
-    clearBtn.addEventListener("click", () => {
-      if (!confirm("Clear all books from storage?")) return;
-      localStorage.removeItem(STORAGE_KEY);
-      renderGrid("#adminGrid");
-    });
-  }
-}
-
-/* Home page: setup filter/sort UI and rendering */
-function initHomePage() {
-  const filter = document.getElementById("filterCategory");
-  const sortSel = document.getElementById("sortSelect");
-  const booksGrid = document.getElementById("booksGrid");
-
-  function doRender() {
-    renderGrid("#booksGrid", { filter: filter?.value || "All", sort: sortSel?.value || "none" });
-  }
-
-  // initial render
-  doRender();
-
-  if (filter) filter.addEventListener("change", doRender);
-  if (sortSel) sortSel.addEventListener("change", doRender);
-
-  attachDeleteHandler("#booksGrid");
-}
-
-/* Entry: determine page and init (only in browser) */
-if (typeof document !== 'undefined' && document && typeof document.addEventListener === 'function') {
-  document.addEventListener("DOMContentLoaded", () => {
-    if (document.querySelector("#addBookForm")) {
-      initAdminPage();
-    }
-    if (document.querySelector("#booksGrid")) {
-      initHomePage();
-    }
-  });
-}
+// init
+document.addEventListener('DOMContentLoaded', () => {
+ // if admin page
+ if(document.getElementById('fleetGrid')){
+   setupFilters();
+   attachFormHandler();
+   attachCardHandler();
+   render(getFiltersFromUI());
+ }
+});
